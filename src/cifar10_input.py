@@ -37,7 +37,7 @@ NUM_CLASSES = 10
 NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = 50000
 NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = 10000
 
-def placeholder_inputs():
+def placeholder_inputs(batch_size):
   """Generate placeholder variables to represent the input tensors.
   These placeholders are used as inputs by the rest of the model building
   code and will be fed from the downloaded data in the .run() loop, below.
@@ -50,8 +50,8 @@ def placeholder_inputs():
   # Note that the shapes of the placeholders match the shapes of the full
   # image and label tensors, except the first dimension is now batch_size
   # rather than the full size of the train or test data sets.
-  images_placeholder = tf.placeholder(tf.float32, shape=(None, IMAGE_SIZE, IMAGE_SIZE, 3))
-  labels_placeholder = tf.placeholder(tf.int64, shape=(None,))
+  images_placeholder = tf.placeholder(tf.float32, shape=(batch_size, IMAGE_SIZE, IMAGE_SIZE, 3))
+  labels_placeholder = tf.placeholder(tf.int64, shape=(batch_size,))
   return images_placeholder, labels_placeholder
 
 def fill_feed_dict(images_real, labels_real, images_pl, labels_pl):
