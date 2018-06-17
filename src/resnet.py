@@ -7,8 +7,15 @@ This is the resnet structure
 import numpy as np
 from hyper_parameters import *
 
+import tensorflow as tf
+
 BN_EPSILON = 0.001
 SEED = 66478
+
+FLAGS = tf.app.flags.FLAGS
+
+tf.app.flags.DEFINE_boolean('use_fp16', False,
+                            """Train the model using fp16.""")
 
 def activation_summary(x):
     '''
@@ -166,7 +173,7 @@ def residual_block(input_layer, output_channel, first_block=False):
 
     output = conv2 + padded_input
     return output
-    
+
 
 def _variable_on_cpu(name, shape, initializer):
     """Helper to create a Variable stored on CPU memory.
