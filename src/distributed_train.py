@@ -251,7 +251,7 @@ def train(target, cluster_spec):
         cur_iteration += 1
 
         start_time = time.time()
-        feed_dict = cifar10.fill_feed_dict(images, labels, images_pl, labels_pl)
+        feed_dict = cifar10_input.fill_feed_dict(images, labels, images_pl, labels_pl)
 
         run_options = tf.RunOptions()
         run_metadata = tf.RunMetadata()
