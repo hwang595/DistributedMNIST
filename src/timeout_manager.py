@@ -32,8 +32,8 @@ class TimeoutServer(pb.Root):
     self.worker_finished_computing_gradients_times = [{}] * self.n_total_workers
     self.compute_times = []
     self.iteration_start_times = {}
-    self.ITERATION_START_TRACKING = 6
-    self.ITERATION_END_TRACKING = 20
+    self.ITERATION_START_TRACKING = 10
+    self.ITERATION_END_TRACKING = 500
 
   def remote_parameters_updated(self, step):
     tf.logging.info("Parameters have been updated on step %d.." % step)
@@ -208,4 +208,4 @@ def launch_manager(sess, tf_flags):
     rpc_client.check_ready_to_start()
     time.sleep(1)
 
-  return rpc_client, timeout_server,
+  return rpc_client, timeout_server
