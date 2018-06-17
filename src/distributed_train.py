@@ -23,6 +23,8 @@ from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import logging_ops
 from tensorflow.python.client import timeline
 from tensorflow.python.ops import data_flow_ops
+
+import cifar10_input
 import cifar10
 
 np.set_printoptions(threshold=np.nan)
