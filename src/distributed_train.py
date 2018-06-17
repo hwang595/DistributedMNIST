@@ -145,7 +145,7 @@ def train(target, cluster_spec):
                                     FLAGS.learning_rate_decay_factor,
                                     staircase=True)
 
-    images, labels = cifar10.placeholder_inputs(FLAGS.batch_size)
+    images, labels = cifar10_input.placeholder_inputs(FLAGS.batch_size)
 
     logits = cifar10.inference(images_pl, train=True)
     top_k_op = tf.nn.in_top_k(logits, labels_pl, 1)
