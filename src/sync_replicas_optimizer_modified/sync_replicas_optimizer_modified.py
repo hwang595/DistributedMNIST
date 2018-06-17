@@ -38,12 +38,13 @@ from tensorflow.python.training import queue_runner
 tf.app.flags.DEFINE_float('interval_ms', 1000, 'The interval ms')
 
 FLAGS = tf.app.flags.FLAGS
+
 # Please note that the gradients from replicas are averaged instead of summed
 # (as in the old sync_replicas_optimizer) so you need to increase the learning
 # rate according to the number of replicas. This change is introduced to be
 # consistent with how gradients are aggregated (averaged) within a batch in a
 # replica.
-class TimeoutReplicasOptimizer(optimizer.Optimizer):
+class SyncReplicasOptimizerModified(optimizer.Optimizer):
   """Class to synchronize, aggregate gradients and pass them to the optimizer.
   In a typical asynchronous training environment, it's common to have some
   stale gradients. For example, with a N-replica asynchronous training,
@@ -173,7 +174,7 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
     if total_num_replicas is None:
       total_num_replicas = replicas_to_aggregate
 
-    super(TimeoutReplicasOptimizer, self).__init__(use_locking, name)
+    super(SyncReplicasOptimizerModified, self).__init__(use_locking, name)
     logging.info(
         "TimeoutReplicas: total_num_replicas=%s",
         total_num_replicas)
@@ -193,7 +194,7 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
     # the accumulator to be global step. This list contains list of the
     # following format: (accumulator, device).
     self._accumulator_list = []
-    self._constant_for_comparison = 2
+
     # For timeout, we have one token queue per worker. This makes it so that
     # a worker can not take the work of another worker if it finishes early.
     self._sync_token_queues = [0] * self._total_num_replicas
@@ -226,17 +227,14 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
     Returns:
       A list of (gradient, variable) pairs.
     """
-    '''
     with ops.control_dependencies([logging_ops.Print(0, [0], message="Starting to compute gradients")]):
       grads_and_vars = self._opt.compute_gradients(*args, **kwargs)
       for index, (grad, var) in enumerate(grads_and_vars):
         with ops.control_dependencies([grad]):
           grads_and_vars[index] = (logging_ops.Print(grad, [0], message="Done computing gradient %d" % index), var)
       return grads_and_vars
-    '''
-    return self._opt.compute_gradients(*args, **kwargs)
 
-  def apply_gradients(self, grads_and_vars, worker_id, global_step=None, name=None, collect_cdfs=False):
+  def apply_gradients(self, grads_and_vars, worker_id, global_step=None, name=None, collect_cdfs=True):
     """Apply gradients to variables.
     This contains most of the synchronization implementation and also wraps the
     apply_gradients() from the real optimizer.
@@ -266,11 +264,6 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
     aggregated_grad = []
     var_list = []
 
-#      worker_id_list_printer = logging_ops.Print(global_step,
-#                  [a for a in self._worker_idx_list] + [worker_id] + [global_step],
-#                  message="Worker ID list status")
-#      train_ops.append(worker_id_list_printer)
-
     self._local_step = variables.Variable(
         initial_value=0,
         trainable=False,
@@ -280,8 +273,7 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
     self.local_step_init_op = state_ops.assign(self._local_step, global_step._ref())
     chief_init_ops = [self.local_step_init_op]
     self.ready_for_local_init_op = variables.report_uninitialized_variables(
-#      variables.all_variables())
-      tf.global_variables())
+      variables.all_variables())
 
     # The wait op waits for the current worker to dequeue a token from its respective token queue
     self._wait_op = self._sync_token_queues[worker_id].dequeue()
@@ -294,7 +286,6 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
 
     # Gradient accum creation
     with ops.name_scope(None, self._name):
-      should_stop_list = []
       for grad, var in grads_and_vars:
         var_list.append(var)
         tf.logging.info("Grad " + str(grad) + " assigned to " + str(var.device))
@@ -311,10 +302,10 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
               raise ValueError("Unknown grad type!")
             grad_accum = data_flow_ops.SparseConditionalAccumulator(
               grad.dtype, shape=(), shared_name=var.name + "/grad_accum")
-          self._accumulator_list.append((grad_accum, var))
-          should_stop_list.append('0')
 
-      """# Phase 1 gradient computation
+          self._accumulator_list.append((grad_accum, var))
+
+      # Phase 1 gradient computation
       with ops.control_dependencies([update_local_step_op]):
         for index, (grad, var) in enumerate(grads_and_vars):
           with ops.device(var.device):
@@ -333,64 +324,7 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
               grad_accum = self._accumulator_list[index][0]
 
               train_ops.append(grad_accum.apply_indexed_slices_grad(
-                grad, local_step=self._local_step._ref()))"""
-
-      # Phase 1 gradient computation
-      with ops.control_dependencies([update_local_step_op]):
-        for index, (grad, var) in enumerate(grads_and_vars):
-          print_start_op = logging_ops.Print(global_step, [global_step], message="Starting to apply grads for variable %d" % index)
-          train_ops.append(print_start_op)
-          with ops.device(var.device):
-            if grad is None:
-              continue
-
-            elif isinstance(grad, ops.Tensor):
-              grad_accum = self._accumulator_list[index][0]
-
-              with ops.control_dependencies([print_start_op]):               
-                with tf.device("job:worker/task:%d" % worker_id):
-                  apply_grad_op = grad_accum.apply_grad(grad,
-                                                        local_step=self._local_step._ref())
-
-                  with ops.control_dependencies([apply_grad_op]):
-                    finished_print_op = logging_ops.Print(global_step, [global_step], message="Done applying grads for variable %d" % index)
-                    train_ops.append(finished_print_op)
-
-
-            else:
-              if not isinstance(grad, ops.IndexedSlices):
-                raise ValueError("Unknown grad type!")
-              grad_accum = self._accumulator_list[index][0]
-
-              with ops.control_dependencies([print_start_op]):
-                with tf.device("job:worker/task:%d" % worker_id):
-                  apply_grad_op = grad_accum.apply_indexed_slices_grad(
-                    grad, local_step=self._local_step._ref())
-
-                  with ops.control_dependencies([apply_grad_op]):                  
-                    finished_print_op = logging_ops.Print(global_step, [global_step], message="Done applying grads for variable %d" % index)
-                    train_ops.append(finished_print_op)
-            '''
-            with ops.control_dependencies([apply_grad_op]):          
-              accum_sizes_printer = logging_ops.Print(global_step,
-#                                                   [x[0].num_accumulated() for x in self._accumulator_list] + [worker_id] + [global_step],
-                                                  [worker_id] + [global_step],
-                                                   message="Accum aggregated status on ps")
-              train_ops.append(accum_sizes_printer)
-              for x_idx in range(len(self._accumulator_list)):
-                x = self._accumulator_list[x_idx]
-                ret = tf.cond(tf.greater_equal(x[0].num_accumulated(), self._constant_for_comparison),
-                                  lambda: tf.constant(1), lambda: tf.constant(0))
-                if ret == 1:
-                  should_stop_list[x_idx] = '1'
-                  test_cond_printer = logging_ops.Print(global_step, [global_step],
-                                   message="Seeing this means return real num")
-                  train_ops.append(test_cond_printer)
-                should_stop_list_printer = logging_ops.Print(global_step,
-                                                   [y for y in should_stop_list] + [global_step],
-                                                   message="Should stop list status on ps")
-                train_ops.append(should_stop_list_printer)
-            '''
+                grad, local_step=self._local_step._ref()))
 
       # Phase 2 gradient applying
       for index, (grad, var) in enumerate(grads_and_vars):
@@ -445,10 +379,10 @@ class TimeoutReplicasOptimizer(optimizer.Optimizer):
         with ops.control_dependencies(train_ops):
           # Worker finished applying gradients. Add token to phase1_finished_queue
           train_op = logging_ops.Print(self._local_step._ref(),
-#                                       [x[0].num_accumulated() for x in self._accumulator_list] + [worker_id] + [global_step],
-                                        [worker_id] + [global_step],
+                                       [x[0].num_accumulated() for x in self._accumulator_list] + [worker_id],
                                        message="Finished worker updates",
                                        name="FinishedWorkerUpdatesPrint")
+
 
       for accum, var in self._accumulator_list:
         with ops.device(var.device):
