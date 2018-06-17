@@ -49,7 +49,7 @@ cfg = Cfg({
     "image_id": "ami-b601b1d6",
 
     # Launch specifications
-    "spot_price" : ".5",                 # Has to be a string
+    "spot_price" : ".016",                 # Has to be a string
 
     # SSH configuration
     "ssh_username" : "ubuntu",            # For sshing. E.G: ssh ssh_username@hostname
@@ -89,7 +89,7 @@ cfg = Cfg({
 
     # Model configuration
     "batch_size" : "256",
-    "max_steps"  : "3000"
+    "max_steps"  : "3000",
     "initial_learning_rate" : ".1",
     "learning_rate_decay_factor" : "1",
     "num_epochs_per_decay" : "350.0",
