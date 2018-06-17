@@ -1,12 +1,21 @@
-# This code is taken and modified from the inception_distribute_train.py file of
-# google's tensorflow inception model. The original source is here - https://github.com/tensorflow/models/tree/master/inception.
+# Coder: Wenxin Xu
+# Github: https://github.com/wenxinxu/resnet_in_tensorflow
+# ==============================================================================
+#Revised by: Hongyi Wang
 
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+from resnet import *
 from datetime import datetime
+import time
+from cifar10_input import *
+import pandas as pd
+
 from threading import Timer
+from sync_replicas_optimizer_modified.sync_replicas_optimizer_modified import TimeoutReplicasOptimizer
+from backup_worker_experiment.backup_worker_optimizer import BackupOptimizer
 import os.path
 import time
 
@@ -23,15 +32,17 @@ from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import logging_ops
 from tensorflow.python.client import timeline
 from tensorflow.python.ops import data_flow_ops
-
-import cifar10_input
-import cifar10
+from timeout_manager import launch_manager
 
 np.set_printoptions(threshold=np.nan)
 tf.logging.set_verbosity(tf.logging.INFO)
 
 FLAGS = tf.app.flags.FLAGS
+SEED = 448
 
+tf.app.flags.DEFINE_boolean('worker_times_cdf_method', False, 'Track worker times cdf')
+tf.app.flags.DEFINE_boolean('interval_method', False, 'Use the interval method')
+tf.app.flags.DEFINE_boolean('backup_worker_method', False, 'Use for backup worker experiments')
 tf.app.flags.DEFINE_boolean('should_summarize', False, 'Whether Chief should write summaries.')
 tf.app.flags.DEFINE_boolean('timeline_logging', False, 'Whether to log timeline of events.')
 tf.app.flags.DEFINE_string('job_name', '', 'One of "ps", "worker"')
@@ -52,9 +63,11 @@ tf.app.flags.DEFINE_integer('rpc_port', 1235,
 
 tf.app.flags.DEFINE_integer('max_steps', 1000000, 'Number of batches to run.')
 tf.app.flags.DEFINE_integer('batch_size', 128, 'Batch size.')
+tf.app.flags.DEFINE_integer('num_worker_kill', 3, 'Number of workers to kill.')
 tf.app.flags.DEFINE_string('subset', 'train', 'Either "train" or "validation".')
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             'Whether to log device placement.')
+tf.app.flags.DEFINE_integer('num_of_instances_cifar10', 50000, 'Number of data instances in Cifar10 dataset')
 
 # Task ID is used to select the chief and also to access the local_step for
 # each replica to check staleness of the gradients in sync_replicas_optimizer.
@@ -66,11 +79,12 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_integer('num_replicas_to_aggregate', -1,
                             """Number of gradients to collect before """
                             """updating the parameters.""")
-tf.app.flags.DEFINE_integer('save_interval_secs', 5,
+tf.app.flags.DEFINE_integer('save_interval_secs', 20,
                             'Save interval seconds.')
 tf.app.flags.DEFINE_integer('save_summaries_secs', 300,
                             'Save summaries interval seconds.')
 
+#=========================================================================#
 # **IMPORTANT**
 # Please note that this learning rate schedule is heavily dependent on the
 # hardware architecture, batch size and any changes to the model architecture
@@ -88,224 +102,293 @@ tf.app.flags.DEFINE_float('num_epochs_per_decay', 2.0,
                           'Epochs after which learning rate decays.')
 tf.app.flags.DEFINE_float('learning_rate_decay_factor', 0.999,
                           'Learning rate decay factor.')
+#=========================================================================#
 
 # Constants dictating the learning rate schedule.
 RMSPROP_DECAY = 0.9                # Decay term for RMSProp.
 RMSPROP_MOMENTUM = 0.9             # Momentum in RMSProp.
 RMSPROP_EPSILON = 1.0              # Epsilon term for RMSProp.
 
-def train(target, cluster_spec):
+def fill_feed_dict(all_data, all_labels, image_placeholder, label_placeholder, batch_size, local_data_batch_idx, epoch_counter):
+    train_batch_data, train_batch_labels, local_data_batch_idx, epoch_counter = generate_augment_train_batch(
+                        all_data, all_labels, batch_size, local_data_batch_idx, epoch_counter)
+    feed_dict = {image_placeholder: train_batch_data, label_placeholder: train_batch_labels}
+    return epoch_counter, local_data_batch_idx, feed_dict
 
-  """Train Inception on a dataset for a number of steps."""
-  # Number of workers and parameter servers are infered from the workers and ps
-  # hosts string.
-  num_workers = len(cluster_spec.as_dict()['worker'])
-  num_parameter_servers = len(cluster_spec.as_dict()['ps'])
-  # If no value is given, num_replicas_to_aggregate defaults to be the number of
-  # workers.
-  if FLAGS.num_replicas_to_aggregate == -1:
-    num_replicas_to_aggregate = num_workers
-  else:
-    num_replicas_to_aggregate = FLAGS.num_replicas_to_aggregate
+## Helper functions
+def calc_loss(logits, labels):
+    """Add L2Loss to all the trainable variables.
+    Add summary for "Loss" and "Loss/avg".
+    Args:
+      logits: Logits from inference().
+      labels: Labels from distorted_inputs or inputs(). 1-D tensor
+              of shape [batch_size]
+    Returns:
+      Loss tensor of type float.
+    """
+    # Calculate the average cross entropy loss across the batch.
+    labels = tf.cast(labels, tf.int64)
+    cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
+        labels=labels, logits=logits, name='cross_entropy_per_example')
+    cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+    tf.add_to_collection('losses', cross_entropy_mean)
 
-  # Both should be greater than 0 in a distributed training.
-  assert num_workers > 0 and num_parameter_servers > 0, (' num_workers and '
-                                                         'num_parameter_servers'
-                                                         ' must be > 0.')
+    # The total loss is defined as the cross entropy loss plus all of the weight
+    # decay terms (L2 loss).
+    return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
-  # Choose worker 0 as the chief. Note that any worker could be the chief
-  # but there should be only one chief.
-  is_chief = (FLAGS.task_id == 0)
+def top_k_error(predictions, labels, k):
+    '''
+    Calculate the top-k error
+    :param predictions: 2D tensor with shape [batch_size, num_labels]
+    :param labels: 1D tensor with shape [batch_size, 1]
+    :param k: int
+    :return: tensor with shape [1]
+    '''
+    batch_size = predictions.get_shape().as_list()[0]
+    in_top1 = tf.to_float(tf.nn.in_top_k(predictions, labels, k=1))
+    num_correct = tf.reduce_sum(in_top1)
+    return (batch_size - num_correct) / float(batch_size)
 
-  # Ops are assigned to worker by default.
-  with tf.device(
-      tf.train.replica_device_setter(
-        worker_device='/job:worker/task:%d' % FLAGS.task_id,
-        cluster=cluster_spec)):
+def generate_augment_train_batch(train_data, train_labels, train_batch_size, local_data_batch_idx, epoch_counter):
+    '''
+    This function helps generate a batch of train data, and random crop, horizontally flip
+    and whiten them at the same time
+    :param train_data: 4D numpy array
+    :param train_labels: 1D numpy array
+    :param train_batch_size: int
+    :return: augmented train batch data and labels. 4D numpy array and 1D numpy array
+    '''
+    '''
+    offset = np.random.choice(EPOCH_SIZE - train_batch_size, 1)[0]
+    batch_data = train_data[offset:offset+train_batch_size, ...]
+    batch_data = random_crop_and_flip(batch_data, padding_size=FLAGS.padding_size)
+    '''
+    start = local_data_batch_idx
+    local_data_batch_idx += train_batch_size #next time your should start
+    if local_data_batch_idx > FLAGS.num_of_instances_cifar10:
+      # Finished epoch
+      epoch_counter += 1
+      # Shuffle the data
+      perm = np.arange(FLAGS.num_of_instances_cifar10)
+      np.random.shuffle(perm)
+      train_data = train_data[perm]
+      train_labels = train_labels[perm]
+      # Start next epoch
+      start = 0
+      local_data_batch_idx = train_batch_size
+      assert train_batch_size <= FLAGS.num_of_instances_cifar10
+    end = local_data_batch_idx
+    train_batch_tmp = train_data[start:end]
+    train_batch = random_crop_and_flip(train_batch_tmp, padding_size=FLAGS.padding_size)
+    batch_labels = train_labels[start:end]
+    tf.logging.info("Batch shapes %s" % str(train_batch.shape))
+    tf.logging.info("Standardized batch shapes %s" % str(whitening_image(train_batch).shape))
+    # Most of the time return the non distorted image
+    return train_batch, batch_labels, local_data_batch_idx, epoch_counter
 
-    # Create a variable to count the number of train() calls. This equals the
-    # number of updates applied to the variables. The PS holds the global step.
-    global_step = tf.Variable(0, name="global_step", trainable=False)
 
-    # Calculate the learning rate schedule.
-    #num_batches_per_epoch = (dataset.num_examples / FLAGS.batch_size)
-    # Calculate the learning rate schedule.
-    num_batches_per_epoch = cifar10_input.NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN / FLAGS.batch_size
-    decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay / num_replicas_to_aggregate)
-    # Decay steps need to be divided by the number of replicas to aggregate.
-    # This was the old decay schedule. Don't want this since it decays too fast with a fixed learning rate.
-    #decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay / num_replicas_to_aggregate)
-    # New decay schedule. Decay every few steps.
-    #decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay / num_workers)
+def train(target, all_data, all_labels, cluster_spec):
+    '''
+    This is the main function for training
+    '''
+    image_placeholder = tf.placeholder(dtype=tf.float32,
+                                            shape=[FLAGS.batch_size, IMG_HEIGHT,
+                                                    IMG_WIDTH, IMG_DEPTH])
+    label_placeholder = tf.placeholder(dtype=tf.int32, shape=[FLAGS.batch_size])
 
-    # Decay the learning rate exponentially based on the number of steps.
-    lr = tf.train.exponential_decay(FLAGS.initial_learning_rate,
-                                    global_step,
-                                    decay_steps,
-                                    FLAGS.learning_rate_decay_factor,
-                                    staircase=True)
+    num_workers = len(cluster_spec.as_dict()['worker'])
+    num_parameter_servers = len(cluster_spec.as_dict()['ps'])
 
-    images_pl, labels_pl = cifar10_input.placeholder_inputs(FLAGS.batch_size)
-
-    logits = cifar10.inference(images_pl)
-    top_k_op = tf.nn.in_top_k(logits, labels_pl, 1)
-    total_loss = cifar10.loss(logits, labels_pl)
-
-    # Add classification loss.
-    total_loss = cifar10.loss(logits, labels_pl)
-
-    # Create an optimizer that performs gradient descent.
-    opt = tf.train.AdamOptimizer(lr)
-
-    # Use V2 optimizer
-    opt = tf.train.SyncReplicasOptimizer(
-      opt,
-      replicas_to_aggregate=num_replicas_to_aggregate,
-      total_num_replicas=num_workers)  
-
-    # Compute gradients with respect to the loss.
-    # Images and labels for computing R
-    images, labels = cifar10.inputs(eval_data=False)
-    
-    grads = opt.compute_gradients(total_loss)
-    apply_gradients_op = opt.apply_gradients(grads, global_step=global_step)
-
-    with tf.control_dependencies([apply_gradients_op]):
-      train_op = tf.identity(total_loss, name='train_op')
-
-    # Get chief queue_runners, init_tokens and clean_up_op, which is used to
-    # synchronize replicas.
-    # More details can be found in sync_replicas_optimizer.
-    chief_queue_runners = [opt.get_chief_queue_runner()]
-    init_tokens_op = opt.get_init_tokens_op()
-
-    # Create a saver.
-    #saver = tf.train.Saver()
-    saver = tf.train.Saver(max_to_keep=50)
-
-    # Build the summary operation based on the TF collection of Summaries.
-    summary_op = tf.summary.merge_all()
-
-    # Build an initialization operation to run below.
-    init_op = tf.initialize_all_variables()
-
-    test_print_op = logging_ops.Print(0, [0], message="Test print success")
-
-    # We run the summaries in the same thread as the training operations by
-    # passing in None for summary_op to avoid a summary_thread being started.
-    # Running summaries and training operations in parallel could run out of
-    # GPU memory.
-    if is_chief:
-      local_init_op = opt.chief_init_op
+    if FLAGS.num_replicas_to_aggregate == -1:
+        num_replicas_to_aggregate = num_workers
     else:
-      local_init_op = opt.local_step_init_op
+        num_replicas_to_aggregate = FLAGS.num_replicas_to_aggregate
 
-    local_init_opt = [local_init_op]
-    ready_for_local_init_op = opt.ready_for_local_init_op
+    assert num_workers > 0 and num_parameter_servers > 0, (' num_workers and '
+                                                     'num_parameter_servers'
+                                                     ' must be > 0.')
+    is_chief = (FLAGS.task_id == 0)
+    num_examples = all_data.shape[0]
 
-    sv = tf.train.Supervisor(is_chief=is_chief,
-                             local_init_op=local_init_op,
-                             ready_for_local_init_op=ready_for_local_init_op,
-                             logdir=FLAGS.train_dir,
-                             init_op=init_op,
-                             summary_op=None,
-                             global_step=global_step,
-                             saver=saver,
-                             save_model_secs=FLAGS.save_interval_secs)
+    with tf.device(
+        tf.train.replica_device_setter(
+        #cpu only    
+#            worker_device='/job:worker/task:%d' % FLAGS.task_id,
+        #with gpu enabled
+            worker_device='/job:worker/task:%d/gpu:0' % FLAGS.task_id,
+            cluster=cluster_spec)):
 
+        global_step = tf.Variable(0, name="global_step", trainable=False)
 
-    tf.logging.info('%s Supervisor' % datetime.now())
+        num_batches_per_epoch = (num_examples / FLAGS.batch_size)
+        decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay / num_replicas_to_aggregate)
+        lr = tf.train.exponential_decay(FLAGS.initial_learning_rate,
+                                        global_step,
+                                        decay_steps,
+                                        FLAGS.learning_rate_decay_factor,
+                                        staircase=True)
+        # Logits of training data and valiation data come from the same graph. The inference of
+        # validation data share all the weights with train data. This is implemented by passing
+        # reuse=True to the variable scopes of train graph
+        logits = inference(image_placeholder, FLAGS.num_residual_blocks, reuse=False)
 
-    sess_config = tf.ConfigProto(
-        allow_soft_placement=True,
-        log_device_placement=FLAGS.log_device_placement)
+        total_loss = calc_loss(logits, label_placeholder)
 
-    # Get a session.
-    sess = sv.prepare_or_wait_for_session(target, config=sess_config)
-
-    # Start the queue runners.
-    queue_runners = tf.get_collection(tf.GraphKeys.QUEUE_RUNNERS)
-    sv.start_queue_runners(sess, queue_runners)
-    tf.logging.info('Started %d queues for processing input data.',
-                    len(queue_runners))
-
-    if is_chief:
-      sv.start_queue_runners(sess, chief_queue_runners)
-      sess.run(init_tokens_op)
-
-    # Train, checking for Nans. Concurrently run the summary operation at a
-    # specified interval. Note that the summary_op and train_op never run
-    # simultaneously in order to prevent running out of GPU memory.
-    next_summary_time = time.time() + FLAGS.save_summaries_secs
-    begin_time = time.time()
-    cur_iteration = -1
-    iterations_finished = set()
-
-    while not sv.should_stop():
-      try:
-
-        sys.stdout.flush()
-        tf.logging.info("A new iteration...")
-
-        # Increment current iteration
-        cur_iteration += 1
-
-        start_time = time.time()
-        feed_dict = cifar10_input.fill_feed_dict(images, labels, images_pl, labels_pl)
-
-        run_options = tf.RunOptions()
-        run_metadata = tf.RunMetadata()
-
-        if FLAGS.timeline_logging:
-          run_options.trace_level=tf.RunOptions.FULL_TRACE
-          run_options.output_partition_graphs=True
-
-        loss_value, step = sess.run([train_op, global_step], feed_dict=feed_dict, run_metadata=run_metadata, options=run_options)
+#        predictions = tf.nn.softmax(logits)
+#        train_top1_error = top_k_error(predictions, label_placeholder, 1)
         
-        assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
+        opt = tf.train.AdamOptimizer(lr)
+        if FLAGS.interval_method or FLAGS.worker_times_cdf_method:
+            opt = TimeoutReplicasOptimizer(
+                opt,
+                global_step,
+                total_num_replicas=num_workers)
+        elif FLAGS.backup_worker_method:
+            opt = BackupOptimizer(
+                opt,
+                replicas_to_aggregate=num_replicas_to_aggregate,
+                total_num_replicas=num_workers
+                )
+        else:
+#            opt = tf.train.SyncReplicasOptimizerV2(
+            opt = tf.train.SyncReplicasOptimizer(
+                opt,
+                replicas_to_aggregate=num_replicas_to_aggregate,
+                total_num_replicas=num_workers)
 
-        # Log the elapsed time per iteration
-        finish_time = time.time()
+        # Compute gradients with respect to the loss.
+        grads = opt.compute_gradients(total_loss)
 
-        # Create the Timeline object, and write it to a json
-        if FLAGS.timeline_logging:
-          tl = timeline.Timeline(run_metadata.step_stats)
-          ctf = tl.generate_chrome_trace_format()
-          with open('%s/worker=%d_timeline_iter=%d.json' % (FLAGS.train_dir, FLAGS.task_id, step), 'w') as f:
-            f.write(ctf)
+        if FLAGS.interval_method or FLAGS.worker_times_cdf_method:
+            apply_gradients_op = opt.apply_gradients(grads, FLAGS.task_id, global_step=global_step, collect_cdfs=FLAGS.worker_times_cdf_method)
+#            apply_gradients_op = opt.apply_gradients(grads, FLAGS.task_id, global_step=global_step)
+        elif FLAGS.backup_worker_method:
+            apply_gradients_op = opt.apply_gradients(grads, FLAGS.task_id, global_step=global_step)
+        else:
+           apply_gradients_op = opt.apply_gradients(grads, global_step=global_step)
+#           apply_gradients_op = opt.apply_gradients(grad_new, global_step=global_step)
+        with tf.control_dependencies([apply_gradients_op]):
+            train_op = tf.identity(total_loss, name='train_op')            
 
-        if step > FLAGS.max_steps:
-          break
+        # Initialize a saver to save checkpoints. Merge all summaries, so we can run all
+        # summarizing operations by running summary_op. Initialize a new session
+        chief_queue_runners = [opt.get_chief_queue_runner()]
+        init_tokens_op = opt.get_init_tokens_op()
+        saver = tf.train.Saver()
+        summary_op = tf.summary.merge_all()
+        init_op = tf.global_variables_initializer()
+        test_print_op = logging_ops.Print(0, [0], message="Test print success")
+        if is_chief:
+            local_init_op = opt.chief_init_op
+        else:
+            local_init_op = opt.local_step_init_op
 
-        duration = time.time() - start_time
-        examples_per_sec = FLAGS.batch_size / float(duration)
-        format_str = ('Worker %d: %s: step %d, loss = %f'
-                      '(%.1f examples/sec; %.3f  sec/batch)')
-        tf.logging.info(format_str %
+        local_init_opt = [local_init_op]
+        ready_for_local_init_op = opt.ready_for_local_init_op
+
+        sv = tf.train.Supervisor(is_chief=is_chief,
+                                 local_init_op=local_init_op,
+                                 ready_for_local_init_op=ready_for_local_init_op,
+                                 logdir=FLAGS.train_dir,
+                                 init_op=init_op,
+                                 summary_op=None,
+                                 global_step=global_step,
+                                 saver=saver,
+                                 save_model_secs=FLAGS.save_interval_secs)
+        tf.logging.info('%s Supervisor' % datetime.now())
+        sess_config = tf.ConfigProto(
+            allow_soft_placement=True,
+            log_device_placement=FLAGS.log_device_placement)
+        sess = sv.prepare_or_wait_for_session(target, config=sess_config)
+        queue_runners = tf.get_collection(tf.GraphKeys.QUEUE_RUNNERS)
+        sv.start_queue_runners(sess, queue_runners)
+        tf.logging.info('Started %d queues for processing input data.',
+                        len(queue_runners))
+
+        if is_chief:
+            if not FLAGS.interval_method or FLAGS.worker_times_cdf_method:
+                sv.start_queue_runners(sess, chief_queue_runners)
+            sess.run(init_tokens_op)
+
+        timeout_client, timeout_server = launch_manager(sess, FLAGS)
+        next_summary_time = time.time() + FLAGS.save_summaries_secs
+        begin_time = time.time()
+        cur_iteration = -1
+        local_data_batch_idx = 0
+        epoch_counter = 0
+        iterations_finished = set()
+
+        if FLAGS.task_id == 0 and FLAGS.interval_method:
+            opt.start_interval_updates(sess, timeout_client)   
+        '''
+        np.random.seed(SEED)
+        b = np.ones(int(num_batches_per_epoch))
+        interval = np.arange(0, int(num_batches_per_epoch))
+        idx_list = np.random.choice(interval, int(num_workers), replace=False)     
+        '''
+        while not sv.should_stop():
+        #    try:
+            sys.stdout.flush()
+            tf.logging.info("A new iteration...")
+            cur_iteration += 1
+
+            if FLAGS.worker_times_cdf_method:
+                sess.run([opt._wait_op])
+                timeout_client.broadcast_worker_dequeued_token(cur_iteration)
+            start_time = time.time()
+            epoch_counter, local_data_batch_idx, feed_dict = fill_feed_dict(
+                all_data, all_labels, image_placeholder, label_placeholder, FLAGS.batch_size, local_data_batch_idx, epoch_counter)
+
+            run_options = tf.RunOptions()
+            run_metadata = tf.RunMetadata()            
+
+            if FLAGS.timeline_logging:
+                run_options.trace_level=tf.RunOptions.FULL_TRACE
+                run_options.output_partition_graphs=True
+
+            #feed_dict[weight_vec_placeholder] = ls_solution
+            tf.logging.info("RUNNING SESSION... %f" % time.time())
+            tf.logging.info("Data batch index: %s, Current epoch idex: %s" % (str(epoch_counter), str(local_data_batch_idx)))
+            loss_value, step = sess.run(
+                #[train_op, global_step], feed_dict={feed_dict, x}, run_metadata=run_metadata, options=run_options)
+                [train_op, global_step], feed_dict=feed_dict, run_metadata=run_metadata, options=run_options)
+            tf.logging.info("DONE RUNNING SESSION...")
+
+            if FLAGS.worker_times_cdf_method:
+                timeout_client.broadcast_worker_finished_computing_gradients(cur_iteration)
+            assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
+            finish_time = time.time()
+            if FLAGS.timeline_logging:
+                tl = timeline.Timeline(run_metadata.step_stats)
+                ctf = tl.generate_chrome_trace_format()
+                with open('%s/worker=%d_timeline_iter=%d.json' % (FLAGS.train_dir, FLAGS.task_id, step), 'w'):
+                    f.write(ctf)
+            if step > FLAGS.max_steps:
+                break
+
+            duration = time.time() - start_time
+            examples_per_sec = FLAGS.batch_size / float(duration)
+            format_str = ('Worker %d: %s: step %d, loss = %f'
+                            '(%.1f examples/sec; %.3f  sec/batch)')
+            tf.logging.info(format_str %
                         (FLAGS.task_id, datetime.now(), step, loss_value,
-                           examples_per_sec, duration))
+                            examples_per_sec, duration))
+            if is_chief and next_summary_time < time.time() and FLAGS.should_summarize:
+                tf.logging.info('Running Summary operation on the chief.')
+                summary_str = sess.run(summary_op)
+                sv.summary_computed(sess, summary_str)
+                tf.logging.info('Finished running Summary operation.')
+                next_summary_time += FLAGS.save_summaries_secs
 
-        # Determine if the summary_op should be run on the chief worker.
-        if is_chief and next_summary_time < time.time() and FLAGS.should_summarize:
-          tf.logging.info('Running Summary operation on the chief.')
-          summary_str = sess.run(summary_op)
-          sv.summary_computed(sess, summary_str)
-          tf.logging.info('Finished running Summary operation.')
+        if is_chief:
+            tf.logging.info('Elapsed Time: %f' % (time.time()-begin_time))
+        sv.stop()
 
-          # Determine the next time for running the summary.
-          next_summary_time += FLAGS.save_summaries_secs
-      except:
-        tf.logging.info("Unexpected error: %s" % str(sys.exc_info()[0]))
-        raise
+        if is_chief:
+            saver.save(sess,
+                        os.path.join(FLAGS.train_dir, 'model.ckpt'),
+                        global_step=global_step)
 
-    if is_chief:
-      tf.logging.info('Elapsed Time: %f' % (time.time()-begin_time))
 
-    # Stop the supervisor.  This also waits for service threads to finish.
-    sv.stop()
 
-    # Save after the training ends.
-    if is_chief:
-      saver.save(sess,
-                 os.path.join(FLAGS.train_dir, 'model.ckpt'),
-                 global_step=global_step)
