@@ -92,7 +92,7 @@ RMSPROP_DECAY = 0.9                # Decay term for RMSProp.
 RMSPROP_MOMENTUM = 0.9             # Momentum in RMSProp.
 RMSPROP_EPSILON = 1.0              # Epsilon term for RMSProp.
 
-def train(target, dataset, cluster_spec):
+def train(target, cluster_spec):
 
   """Train Inception on a dataset for a number of steps."""
   # Number of workers and parameter servers are infered from the workers and ps
@@ -126,11 +126,13 @@ def train(target, dataset, cluster_spec):
     global_step = tf.Variable(0, name="global_step", trainable=False)
 
     # Calculate the learning rate schedule.
-    num_batches_per_epoch = (dataset.num_examples / FLAGS.batch_size)
-
+    #num_batches_per_epoch = (dataset.num_examples / FLAGS.batch_size)
+    # Calculate the learning rate schedule.
+    num_batches_per_epoch = cifar10_input.NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN / FLAGS.batch_size
+    decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay / num_replicas_to_aggregate)
     # Decay steps need to be divided by the number of replicas to aggregate.
     # This was the old decay schedule. Don't want this since it decays too fast with a fixed learning rate.
-    decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay / num_replicas_to_aggregate)
+    #decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay / num_replicas_to_aggregate)
     # New decay schedule. Decay every few steps.
     #decay_steps = int(num_batches_per_epoch * FLAGS.num_epochs_per_decay / num_workers)
 
@@ -143,10 +145,12 @@ def train(target, dataset, cluster_spec):
 
     images, labels = cifar10.placeholder_inputs(FLAGS.batch_size)
 
-    logits = cifar10.inference(images, train=True)
+    logits = cifar10.inference(images_pl, train=True)
+    top_k_op = tf.nn.in_top_k(logits, labels_pl, 1)
+    total_loss = cifar10.loss(logits, labels_pl)
 
     # Add classification loss.
-    total_loss = cifar10.loss(logits, labels)
+    total_loss = cifar10.loss(logits, labels_pl)
 
     # Create an optimizer that performs gradient descent.
     opt = tf.train.AdamOptimizer(lr)
@@ -158,6 +162,9 @@ def train(target, dataset, cluster_spec):
       total_num_replicas=num_workers)  
 
     # Compute gradients with respect to the loss.
+    # Images and labels for computing R
+    images_pl, labels_pl = cifar10.inputs(eval_data=False)
+    
     grads = opt.compute_gradients(total_loss)
     apply_gradients_op = opt.apply_gradients(grads, global_step=global_step)
 
@@ -242,7 +249,7 @@ def train(target, dataset, cluster_spec):
         cur_iteration += 1
 
         start_time = time.time()
-        feed_dict = cifar10.fill_feed_dict(dataset, images, labels, FLAGS.batch_size)
+        feed_dict = cifar10.fill_feed_dict(images, labels, images_pl, labels_pl)
 
         run_options = tf.RunOptions()
         run_metadata = tf.RunMetadata()
