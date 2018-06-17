@@ -136,7 +136,7 @@ def calc_loss(logits, labels):
     # The total loss is defined as the cross entropy loss plus all of the weight
     # decay terms (L2 loss).
     return tf.add_n(tf.get_collection('losses'), name='total_loss')
-  
+
 
 def top_k_error(predictions, labels, k):
     '''
@@ -232,7 +232,7 @@ def train(target, all_data, all_labels, cluster_spec):
         # Logits of training data and valiation data come from the same graph. The inference of
         # validation data share all the weights with train data. This is implemented by passing
         # reuse=True to the variable scopes of train graph
-        logits = inference(image_placeholder, FLAGS.num_residual_blocks, reuse=False)
+        logits = inference(image_placeholder)
 
 #            vali_logits = inference(self.vali_image_placeholder, FLAGS.num_residual_blocks, reuse=True)
 
@@ -347,45 +347,6 @@ def train(target, all_data, all_labels, cluster_spec):
 
             run_options = tf.RunOptions()
             run_metadata = tf.RunMetadata()
-            #=============================================================================================== 
-            '''
-            LS_start_time = time.time()
-            interval_2 = np.arange(0, int(num_workers))
-            workers_to_kill = np.random.choice(interval_2, FLAGS.num_worker_kill, replace=False)
-            #interval_2 = np.arange(0, WORKER_NUM)
-            #workers_to_kill = np.random.choice(interval_2, NUM_WORKER_KILL, replace=False)
-            A = np.zeros((int(num_workers), int(num_batches_per_epoch)))
-            for i in range(A.shape[0]):
-              if i == A.shape[0]-1:
-                A[i][idx_list[i]] = 1
-                A[i][idx_list[0]] = 1
-              else:
-                A[i][idx_list[i]] = 1
-                A[i][idx_list[i+1]] = 1
-
-            for i in range(len(idx_list)):
-              element = idx_list[i]
-              if element == A.shape[1]-1:
-                idx_list[i] = 0
-              else:
-                idx_list[i] += 1
-
-            for k in workers_to_kill:
-              A[k] = 0
-
-            A_for_calc = np.transpose(A)
-            ls_solution = np.dot(np.linalg.pinv(A_for_calc), b)
-            tf.logging.info("workers killed this iteration:")
-            tf.logging.info(str(workers_to_kill))
-            tf.logging.info("The matrix to solve:")
-            for item in A_for_calc:
-              tf.logging.info(str(item))
-            tf.logging.info("Solution of LS:")
-            tf.logging.info(str(ls_solution)) 
-            LS_duration = time.time() - LS_start_time
-            tf.logging.info("LS run time: %s" % str(LS_duration))
-            '''
-            #===============================================================================================             
 
             if FLAGS.timeline_logging:
                 run_options.trace_level=tf.RunOptions.FULL_TRACE

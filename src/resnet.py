@@ -214,7 +214,7 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
     return var
 
 
-def inference(input_tensor_batch, n, reuse):
+def inference(images):
     """Build the CIFAR-10 model.
     Args:
     images: Images returned from distorted_inputs() or inputs().
