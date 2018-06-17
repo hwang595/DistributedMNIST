@@ -147,7 +147,7 @@ def train(target, cluster_spec):
 
     images_pl, labels_pl = cifar10_input.placeholder_inputs(FLAGS.batch_size)
 
-    logits = cifar10.inference(images_pl, train=True)
+    logits = cifar10.inference(images_pl)
     top_k_op = tf.nn.in_top_k(logits, labels_pl, 1)
     total_loss = cifar10.loss(logits, labels_pl)
 
