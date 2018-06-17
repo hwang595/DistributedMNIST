@@ -145,7 +145,7 @@ def train(target, cluster_spec):
                                     FLAGS.learning_rate_decay_factor,
                                     staircase=True)
 
-    images, labels = cifar10_input.placeholder_inputs(FLAGS.batch_size)
+    images_pl, labels_pl = cifar10_input.placeholder_inputs(FLAGS.batch_size)
 
     logits = cifar10.inference(images_pl, train=True)
     top_k_op = tf.nn.in_top_k(logits, labels_pl, 1)
@@ -165,7 +165,7 @@ def train(target, cluster_spec):
 
     # Compute gradients with respect to the loss.
     # Images and labels for computing R
-    images_pl, labels_pl = cifar10.inputs(eval_data=False)
+    images, labels = cifar10.inputs(eval_data=False)
     
     grads = opt.compute_gradients(total_loss)
     apply_gradients_op = opt.apply_gradients(grads, global_step=global_step)
