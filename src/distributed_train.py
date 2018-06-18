@@ -197,7 +197,7 @@ def train(target, all_data, all_labels, cluster_spec):
     #                                        shape=[FLAGS.batch_size, IMG_HEIGHT,
     #                                                IMG_WIDTH, IMG_DEPTH])
     #label_placeholder = tf.placeholder(dtype=tf.int32, shape=[FLAGS.batch_size])
-    images, labels = cifar10.distorted_inputs()
+    images, labels = cifar10.distorted_inputs(batch_size=FLAGS.batch_size)
 
     num_workers = len(cluster_spec.as_dict()['worker'])
     num_parameter_servers = len(cluster_spec.as_dict()['ps'])
