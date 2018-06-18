@@ -269,6 +269,8 @@ def inference(images):
     # by replacing all instances of tf.get_variable() with tf.Variable().
     #
     # conv1
+    tf.logging.info("YAAAA")
+    tf.logging.info(images.get_shape())
     with tf.variable_scope('conv1') as scope:
         kernel = _variable_with_weight_decay('weights',
                                              shape=[5, 5, 3, 64],
@@ -313,8 +315,8 @@ def inference(images):
     with tf.variable_scope('local3') as scope:
         # Move everything into depth so we can perform a single matrix multiply.
         #reshape = tf.reshape(pool2, [FLAGS.batch_size, -1])
-        #tf.logging.info("YOOO")
-        #tf.logging.info(pool2.get_shape())
+        tf.logging.info("YOOO")
+        tf.logging.info(pool2.get_shape())
         reshape = tf.reshape(pool2, [-1, 6 * 6 * 64])
         dim = reshape.get_shape()[1].value
         weights = _variable_with_weight_decay('weights', shape=[dim, 384],
