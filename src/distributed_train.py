@@ -7,7 +7,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from resnet import *
+import cifar10
 from datetime import datetime
 import time
 from cifar10_input import *
@@ -193,10 +193,11 @@ def train(target, all_data, all_labels, cluster_spec):
     '''
     This is the main function for training
     '''
-    image_placeholder = tf.placeholder(dtype=tf.float32,
-                                            shape=[FLAGS.batch_size, IMG_HEIGHT,
-                                                    IMG_WIDTH, IMG_DEPTH])
-    label_placeholder = tf.placeholder(dtype=tf.int32, shape=[FLAGS.batch_size])
+    #image_placeholder = tf.placeholder(dtype=tf.float32,
+    #                                        shape=[FLAGS.batch_size, IMG_HEIGHT,
+    #                                                IMG_WIDTH, IMG_DEPTH])
+    #label_placeholder = tf.placeholder(dtype=tf.int32, shape=[FLAGS.batch_size])
+    images, labels = cifar10.distorted_inputs()
 
     num_workers = len(cluster_spec.as_dict()['worker'])
     num_parameter_servers = len(cluster_spec.as_dict()['ps'])
@@ -232,17 +233,10 @@ def train(target, all_data, all_labels, cluster_spec):
         # Logits of training data and valiation data come from the same graph. The inference of
         # validation data share all the weights with train data. This is implemented by passing
         # reuse=True to the variable scopes of train graph
-        logits = inference(image_placeholder)
+        logits = inference(images)
 
-#            vali_logits = inference(self.vali_image_placeholder, FLAGS.num_residual_blocks, reuse=True)
-
-        # The following codes calculate the train loss, which is consist of the
-        # softmax cross entropy and the relularization loss
-#            regu_losses = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
-        total_loss = calc_loss(logits, label_placeholder)
-
-#        predictions = tf.nn.softmax(logits)
-#        train_top1_error = top_k_error(predictions, label_placeholder, 1)
+        # Calculate loss.
+        loss = cifar10.loss(logits, labels)
         
         opt = tf.train.AdamOptimizer(lr)
         if FLAGS.interval_method or FLAGS.worker_times_cdf_method:
@@ -326,12 +320,7 @@ def train(target, all_data, all_labels, cluster_spec):
 
         if FLAGS.task_id == 0 and FLAGS.interval_method:
             opt.start_interval_updates(sess, timeout_client)   
-        '''
-        np.random.seed(SEED)
-        b = np.ones(int(num_batches_per_epoch))
-        interval = np.arange(0, int(num_batches_per_epoch))
-        idx_list = np.random.choice(interval, int(num_workers), replace=False)     
-        '''
+
         while not sv.should_stop():
         #    try:
             sys.stdout.flush()
@@ -342,8 +331,8 @@ def train(target, all_data, all_labels, cluster_spec):
                 sess.run([opt._wait_op])
                 timeout_client.broadcast_worker_dequeued_token(cur_iteration)
             start_time = time.time()
-            epoch_counter, local_data_batch_idx, feed_dict = fill_feed_dict(
-                all_data, all_labels, image_placeholder, label_placeholder, FLAGS.batch_size, local_data_batch_idx, epoch_counter)
+            #epoch_counter, local_data_batch_idx, feed_dict = fill_feed_dict(
+            #    all_data, all_labels, image_placeholder, label_placeholder, FLAGS.batch_size, local_data_batch_idx, epoch_counter)
 
             run_options = tf.RunOptions()
             run_metadata = tf.RunMetadata()
@@ -354,10 +343,11 @@ def train(target, all_data, all_labels, cluster_spec):
 
             #feed_dict[weight_vec_placeholder] = ls_solution
             tf.logging.info("RUNNING SESSION... %f" % time.time())
-            tf.logging.info("Data batch index: %s, Current epoch idex: %s" % (str(epoch_counter), str(local_data_batch_idx)))
+            #tf.logging.info("Data batch index: %s, Current epoch idex: %s" % (str(epoch_counter), str(local_data_batch_idx)))
             loss_value, step = sess.run(
                 #[train_op, global_step], feed_dict={feed_dict, x}, run_metadata=run_metadata, options=run_options)
-                [train_op, global_step], feed_dict=feed_dict, run_metadata=run_metadata, options=run_options)
+                #[train_op, global_step], feed_dict=feed_dict, run_metadata=run_metadata, options=run_options)
+                [train_op, global_step], run_metadata=run_metadata, options=run_options)
             tf.logging.info("DONE RUNNING SESSION...")
 
             if FLAGS.worker_times_cdf_method:
@@ -385,12 +375,7 @@ def train(target, all_data, all_labels, cluster_spec):
                 sv.summary_computed(sess, summary_str)
                 tf.logging.info('Finished running Summary operation.')
                 next_summary_time += FLAGS.save_summaries_secs
-        #    except tf.errors.DeadlineExceededError:
-        #        tf.logging.info("Killed at time %f" % time.time())
-                #sess.reset_kill()
-        #    except:
-        #        tf.logging.info("Unexpected error: %s" % str(sys.exc_info()[0]))
-                #sess.reset_kill()
+
         if is_chief:
             tf.logging.info('Elapsed Time: %f' % (time.time()-begin_time))
         sv.stop()
