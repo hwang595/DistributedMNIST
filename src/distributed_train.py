@@ -235,7 +235,7 @@ def train(target, cluster_spec):
         # Logits of training data and valiation data come from the same graph. The inference of
         # validation data share all the weights with train data. This is implemented by passing
         # reuse=True to the variable scopes of train graph
-        logits = inference(images)
+        logits = cifar10.inference(images)
 
         # Calculate loss.
         loss = cifar10.loss(logits, labels)
