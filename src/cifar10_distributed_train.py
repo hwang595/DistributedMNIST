@@ -8,7 +8,6 @@ from __future__ import print_function
 import tensorflow as tf
 
 import distributed_train
-from cifar10_input import *
 import cifar10
 
 FLAGS = tf.app.flags.FLAGS
@@ -39,12 +38,12 @@ def main(unused_args):
   else:
     n_workers = len(worker_hosts)
     worker_id = int(FLAGS.task_id)
-    #all_data, all_labels = prepare_train_data(padding_size=FLAGS.padding_size)
+
     # Only the chief checks for or creates train_dir.
     if FLAGS.task_id == 0:
       if not tf.gfile.Exists(FLAGS.train_dir):
         tf.gfile.MakeDirs(FLAGS.train_dir)
-    #distributed_train.train(server.target, all_data, all_labels, cluster_spec)
+
     distributed_train.train(server.target, cluster_spec)
 
 if __name__ == '__main__':
