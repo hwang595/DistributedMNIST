@@ -31,13 +31,14 @@ def main(unused_args):
       job_name=FLAGS.job_name,
       task_index=FLAGS.task_id)
 
+  cifar10.maybe_download_and_extract()
+
   if FLAGS.job_name == 'ps':
     # `ps` jobs wait for incoming connections from the workers.
     server.join()
   else:
     n_workers = len(worker_hosts)
     worker_id = int(FLAGS.task_id)
-    cifar10.maybe_download_and_extract()
     #all_data, all_labels = prepare_train_data(padding_size=FLAGS.padding_size)
     # Only the chief checks for or creates train_dir.
     if FLAGS.task_id == 0:
