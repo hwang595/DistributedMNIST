@@ -189,7 +189,8 @@ def generate_augment_train_batch(train_data, train_labels, train_batch_size, loc
     return train_batch, batch_labels, local_data_batch_idx, epoch_counter
 
 
-def train(target, all_data, all_labels, cluster_spec):
+#def train(target, all_data, all_labels, cluster_spec):
+def train(target, cluster_spec):
     '''
     This is the main function for training
     '''
@@ -211,7 +212,8 @@ def train(target, all_data, all_labels, cluster_spec):
                                                      'num_parameter_servers'
                                                      ' must be > 0.')
     is_chief = (FLAGS.task_id == 0)
-    num_examples = all_data.shape[0]
+    #num_examples = all_data.shape[0]
+    num_examples = NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN
 
     with tf.device(
         tf.train.replica_device_setter(
