@@ -238,7 +238,7 @@ def train(target, cluster_spec):
         logits = cifar10.inference(images)
 
         # Calculate loss.
-        loss = cifar10.loss(logits, labels)
+        total_loss = cifar10.loss(logits, labels)
         
         opt = tf.train.AdamOptimizer(lr)
         if FLAGS.interval_method or FLAGS.worker_times_cdf_method:
