@@ -9,6 +9,7 @@ import tensorflow as tf
 
 import distributed_train
 from cifar10_input import *
+import cifar10
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -36,7 +37,7 @@ def main(unused_args):
   else:
     n_workers = len(worker_hosts)
     worker_id = int(FLAGS.task_id)
-    maybe_download_and_extract()
+    cifar10.maybe_download_and_extract()
     all_data, all_labels = prepare_train_data(padding_size=FLAGS.padding_size)
     # Only the chief checks for or creates train_dir.
     if FLAGS.task_id == 0:
