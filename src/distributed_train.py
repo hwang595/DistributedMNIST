@@ -156,6 +156,10 @@ def compute_R(sess, grads_and_vars, dq, images_pl, labels_pl):
   tf.logging.info("batchsize ratio: %f" % ratio)
   return ratio
 
+def write_meta_data(str_to_write):
+  with open("meta_data_test", "ab") as file:
+    file.write(str_to_write+'\n')
+
 def train(target, cluster_spec):
 
   """Train Inception on a dataset for a number of steps."""
@@ -414,7 +418,8 @@ def train(target, cluster_spec):
 
       # Create the Timeline object, and write it to a json
       tf.logging.info('####################################################################')
-      tf.logging.info(str(run_metadata.step_stats))
+      write_meta_data(str(run_metadata.step_stats))
+      #tf.logging.info(str(run_metadata.step_stats))
       tf.logging.info('####################################################################')
       if FLAGS.timeline_logging:
         tl = timeline.Timeline(run_metadata.step_stats)
