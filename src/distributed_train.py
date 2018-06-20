@@ -414,7 +414,7 @@ def train(target, cluster_spec):
 
       # Create the Timeline object, and write it to a json
       tf.logging.info('####################################################################')
-      print(run_metadata.step_stats)
+      tf.logging.info(str(run_metadata.step_stats))
       tf.logging.info('####################################################################')
       if FLAGS.timeline_logging:
         tl = timeline.Timeline(run_metadata.step_stats)
