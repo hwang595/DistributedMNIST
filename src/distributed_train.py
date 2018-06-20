@@ -390,8 +390,6 @@ def train(target, cluster_spec):
 
       # We dequeue images form the shuffle queue
       if FLAGS.variable_batchsize_r:
-        #batchsize_to_use = min(1023, int(R / 5 / num_workers))
-        #batchsize_to_use = int(int(batchsize_to_use / 32) * 32)
         if loss_value < 0:
           batchsize_to_use = 128
         else:
@@ -409,7 +407,9 @@ def train(target, cluster_spec):
         feed_dict = cifar10_input.fill_feed_dict(images_real, labels_real, images, labels)
         loss_value, step = sess.run([train_op, global_step], run_metadata=run_metadata, options=run_options, feed_dict=feed_dict)
         n_examples_processed += batchsize_to_use * num_workers
-
+        tf.logging.info('####################################################################')
+        tf.logging.info(run_metadata.step_stats)
+        tf.logging.info('####################################################################')
       assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
       # Log the elapsed time per iteration
