@@ -351,8 +351,6 @@ def train(target, cluster_spec):
 
       start_time = time.time()
 
-      sess.run([opt._wait_op])
-
       # Compute batchsize ratio
       new_epoch_float = n_examples_processed / float(cifar10_input.NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN)
       new_epoch_track = int(new_epoch_float)
