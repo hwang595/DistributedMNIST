@@ -239,10 +239,16 @@ def train(target, cluster_spec):
       dequeue_inputs.append([images_q, tf.reshape(labels_q, [-1])])
 
     # Use V2 optimizer
-    opt = SyncReplicasOptimizerModified(
-      opt,
-      global_step,
-      total_num_replicas=num_workers)
+    #opt = SyncReplicasOptimizerModified(
+    #  opt,
+    #  global_step,
+    #  total_num_replicas=num_workers)
+    opt = tf.train.SyncReplicasOptimizer(
+        opt,
+        replicas_to_aggregate=FLAGS.num_replicas_to_aggregate,
+        total_num_replicas=FLAGS.num_replicas_to_aggregate
+      )
+
 
     with ops.device(global_step.device):
       R_queue = data_flow_ops.FIFOQueue(-1,
@@ -322,8 +328,6 @@ def train(target, cluster_spec):
       sv.start_queue_runners(sess, chief_queue_runners)
       sess.run(init_tokens_op)
 
-    timeout_client, timeout_server = launch_manager(sess, FLAGS)
-
     # Train, checking for Nans. Concurrently run the summary operation at a
     # specified interval. Note that the summary_op and train_op never run
     # simultaneously in order to prevent running out of GPU memory.
@@ -348,8 +352,6 @@ def train(target, cluster_spec):
       start_time = time.time()
 
       sess.run([opt._wait_op])
-
-      timeout_client.broadcast_worker_dequeued_token(cur_iteration)
 
       # Compute batchsize ratio
       new_epoch_float = n_examples_processed / float(cifar10_input.NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN)
@@ -409,10 +411,6 @@ def train(target, cluster_spec):
         feed_dict = cifar10_input.fill_feed_dict(images_real, labels_real, images, labels)
         loss_value, step = sess.run([train_op, global_step], run_metadata=run_metadata, options=run_options, feed_dict=feed_dict)
         n_examples_processed += batchsize_to_use * num_workers
-
-      # This uses the queuerunner which does not support variable batch sizes
-      #loss_value, step = sess.run([train_op, global_step], run_metadata=run_metadata, options=run_options)
-      timeout_client.broadcast_worker_finished_computing_gradients(cur_iteration)
 
       assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
 
