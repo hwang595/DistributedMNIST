@@ -36,7 +36,7 @@ def main(unused_args):
   else:
     n_workers = len(worker_hosts)
     worker_id = int(FLAGS.task_id)
-    #cifar10.maybe_download_and_extract()
+    cifar10.maybe_download_and_extract()
     # Only the chief checks for or creates train_dir.
     if FLAGS.task_id == 0:
       if not tf.gfile.Exists(FLAGS.train_dir):
