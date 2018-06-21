@@ -234,7 +234,7 @@ class SyncReplicasOptimizerModified(optimizer.Optimizer):
           grads_and_vars[index] = (logging_ops.Print(grad, [0], message="Done computing gradient %d" % index), var)
       return grads_and_vars
 
-  def apply_gradients(self, grads_and_vars, worker_id, global_step=None, name=None, collect_cdfs=True):
+  def apply_gradients(self, grads_and_vars, worker_id, global_step=None, name=None, collect_cdfs=False):
     """Apply gradients to variables.
     This contains most of the synchronization implementation and also wraps the
     apply_gradients() from the real optimizer.
@@ -305,9 +305,27 @@ class SyncReplicasOptimizerModified(optimizer.Optimizer):
 
           self._accumulator_list.append((grad_accum, var))
 
+      """# Phase 1 gradient computation
+      with ops.control_dependencies([update_local_step_op]):
+        for index, (grad, var) in enumerate(grads_and_vars):
+          with ops.device(var.device):
+            if grad is None:
+              continue
+            elif isinstance(grad, ops.Tensor):
+              grad_accum = self._accumulator_list[index][0]
+              train_ops.append(grad_accum.apply_grad(grad,
+                                                     local_step=self._local_step._ref()))
+            else:
+              if not isinstance(grad, ops.IndexedSlices):
+                raise ValueError("Unknown grad type!")
+              grad_accum = self._accumulator_list[index][0]
+              train_ops.append(grad_accum.apply_indexed_slices_grad(
+                grad, local_step=self._local_step._ref()))"""
+
       # Phase 1 gradient computation
       with ops.control_dependencies([update_local_step_op]):
         for index, (grad, var) in enumerate(grads_and_vars):
+          print_start_op = logging_ops.Print(global_step, [global_step], message="Starting to apply grads for variable %d" % index)
           with ops.device(var.device):
             if grad is None:
               continue
@@ -315,16 +333,28 @@ class SyncReplicasOptimizerModified(optimizer.Optimizer):
             elif isinstance(grad, ops.Tensor):
               grad_accum = self._accumulator_list[index][0]
 
-              train_ops.append(grad_accum.apply_grad(grad,
-                                                     local_step=self._local_step._ref()))
+              with ops.control_dependencies([print_start_op]):
+                with tf.device("job:worker/task:%d" % worker_id):
+                  apply_grad_op = grad_accum.apply_grad(grad,
+                                                        local_step=self._local_step._ref())
+                  with ops.control_dependencies([apply_grad_op]):
+                    finished_print_op = logging_ops.Print(global_step, [global_step], message="Done applying grads for variable %d" % index)
+                    train_ops.append(finished_print_op)
 
             else:
               if not isinstance(grad, ops.IndexedSlices):
                 raise ValueError("Unknown grad type!")
               grad_accum = self._accumulator_list[index][0]
 
-              train_ops.append(grad_accum.apply_indexed_slices_grad(
-                grad, local_step=self._local_step._ref()))
+
+              with ops.control_dependencies([print_start_op]):
+                with tf.device("job:worker/task:%d" % worker_id):
+                  apply_grad_op = grad_accum.apply_indexed_slices_grad(
+                    grad, local_step=self._local_step._ref())
+                  with ops.control_dependencies([apply_grad_op]):
+                    finished_print_op = logging_ops.Print(global_step, [global_step], message="Done applying grads for variable %d" % index)
+                    train_ops.append(finished_print_op)
+
 
       # Phase 2 gradient applying
       for index, (grad, var) in enumerate(grads_and_vars):

@@ -239,15 +239,15 @@ def train(target, cluster_spec):
       dequeue_inputs.append([images_q, tf.reshape(labels_q, [-1])])
 
     # Use V2 optimizer
-    #opt = SyncReplicasOptimizerModified(
-    #  opt,
-    #  global_step,
-    #  total_num_replicas=num_workers)
-    opt = tf.train.SyncReplicasOptimizer(
-        opt,
-        replicas_to_aggregate=FLAGS.num_replicas_to_aggregate,
-        total_num_replicas=FLAGS.num_replicas_to_aggregate
-      )
+    opt = SyncReplicasOptimizerModified(
+      opt,
+      global_step,
+      total_num_replicas=num_workers)
+    #opt = tf.train.SyncReplicasOptimizer(
+    #    opt,
+    #    replicas_to_aggregate=FLAGS.num_replicas_to_aggregate,
+    #    total_num_replicas=FLAGS.num_replicas_to_aggregate
+    #  )
 
 
     with ops.device(global_step.device):
