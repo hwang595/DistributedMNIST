@@ -326,7 +326,7 @@ class SyncReplicasOptimizerModified(optimizer.Optimizer):
       with ops.control_dependencies([update_local_step_op]):
         for index, (grad, var) in enumerate(grads_and_vars):
           #print_start_op = logging_ops.Print(global_step, [global_step], message="Starting to apply grads for variable %d" % index)
-          print_start_op = logging_ops.Print(global_step, [global_step, tf.timestamp()], message="Starting to apply grads for variable {}, Time: {}".format(index, ))         
+          print_start_op = logging_ops.Print(global_step, [global_step, tf.timestamp()], message="Starting to apply grads for variable {}".format(index))         
           with ops.device(var.device):
             if grad is None:
               continue
