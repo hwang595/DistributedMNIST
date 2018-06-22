@@ -73,9 +73,9 @@ tf.app.flags.DEFINE_integer(
 tf.app.flags.DEFINE_integer('num_replicas_to_aggregate', -1,
                             """Number of gradients to collect before """
                             """updating the parameters.""")
-tf.app.flags.DEFINE_integer('save_interval_secs', 10,
+tf.app.flags.DEFINE_integer('save_interval_secs', 10000,
                             'Save interval seconds.')
-tf.app.flags.DEFINE_integer('save_summaries_secs', 300,
+tf.app.flags.DEFINE_integer('save_summaries_secs', 300000,
                             'Save summaries interval seconds.')
 
 # **IMPORTANT**
