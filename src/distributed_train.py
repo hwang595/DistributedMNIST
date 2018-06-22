@@ -27,6 +27,7 @@ from tensorflow.python.client import timeline
 from tensorflow.python.ops import data_flow_ops
 from sync_replicas_optimizer_modified.sync_replicas_optimizer_modified import SyncReplicasOptimizerModified
 from tensorflow.python.training import input as tf_input
+from tensorflow.python.ops import logging_ops
 
 import cifar10_input
 import cifar10
@@ -333,6 +334,7 @@ def train(target, cluster_spec):
     # simultaneously in order to prevent running out of GPU memory.
     next_summary_time = time.time() + FLAGS.save_summaries_secs
     begin_time = time.time()
+    tf.Print(global_step, [global_step, tf.timestamp()], message="Iteration Starting point")
 
     # Keep track of own iteration
     cur_iteration = -1
