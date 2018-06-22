@@ -30,7 +30,6 @@ from tensorflow.python.training import input as tf_input
 
 import cifar10_input
 import cifar10
-from timeout_manager import launch_manager
 
 np.set_printoptions(threshold=np.nan)
 tf.logging.set_verbosity(tf.logging.INFO)
