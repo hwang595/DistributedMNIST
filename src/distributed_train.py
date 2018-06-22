@@ -228,6 +228,7 @@ def train(target, cluster_spec):
     # Images and labels for computing R
     images_R, labels_R = cifar10.inputs(eval_data=False)
     grads_and_vars_R = opt.compute_gradients(total_loss)
+    tf.Print(global_step, [global_step, tf.timestamp()], message="Start Computing Gradient ...")
 
     distorted_inputs_queue, q_sparse_info, q_tensors = cifar10.distorted_inputs_queue()
     dequeue_inputs = []
@@ -260,6 +261,7 @@ def train(target, cluster_spec):
     R_enqueue_many = R_queue.enqueue_many((tokens,))
 
     # Compute gradients with respect to the loss.
+    tf.Print(global_step, [global_step, tf.timestamp()], message="Start Applying Gradient ...")
     grads = opt.compute_gradients(total_loss)
     #apply_gradients_op = opt.apply_gradients(grads, global_step=global_step)
     apply_gradients_op = opt.apply_gradients(grads, FLAGS.task_id, global_step=global_step, collect_cdfs=True)
