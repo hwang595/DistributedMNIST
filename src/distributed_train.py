@@ -334,7 +334,6 @@ def train(target, cluster_spec):
     # simultaneously in order to prevent running out of GPU memory.
     next_summary_time = time.time() + FLAGS.save_summaries_secs
     begin_time = time.time()
-    print("Begining of An Iteration: {}".format(begin_time))
 
     # Keep track of own iteration
     cur_iteration = -1
@@ -348,6 +347,7 @@ def train(target, cluster_spec):
     loss_value = -1
 
     while not sv.should_stop():
+      print("Begining of An Iteration: {}".format(begin_time))
       cur_iteration += 1
       sys.stdout.flush()
 
