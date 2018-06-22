@@ -36,7 +36,7 @@ tf.logging.set_verbosity(tf.logging.INFO)
 
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_boolean('n_train_epochs', 1000, 'Number of epochs to train for')
+tf.app.flags.DEFINE_integer('n_train_epochs', 1000, 'Number of epochs to train for')
 tf.app.flags.DEFINE_boolean('should_summarize', False, 'Whether Chief should write summaries.')
 tf.app.flags.DEFINE_boolean('timeline_logging', False, 'Whether to log timeline of events.')
 tf.app.flags.DEFINE_string('job_name', '', 'One of "ps", "worker"')
