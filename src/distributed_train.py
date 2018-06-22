@@ -226,9 +226,8 @@ def train(target, cluster_spec):
     opt = tf.train.GradientDescentOptimizer(lr)
 
     # Images and labels for computing R
-    images_R, labels_R = cifar10.inputs(eval_data=False)
-    grads_and_vars_R = opt.compute_gradients(total_loss)
-    tf.Print(global_step, [global_step, tf.timestamp()], message="Start Computing Gradient ...")
+    #images_R, labels_R = cifar10.inputs(eval_data=False)
+    #grads_and_vars_R = opt.compute_gradients(total_loss)
 
     distorted_inputs_queue, q_sparse_info, q_tensors = cifar10.distorted_inputs_queue()
     dequeue_inputs = []
@@ -261,13 +260,16 @@ def train(target, cluster_spec):
     R_enqueue_many = R_queue.enqueue_many((tokens,))
 
     # Compute gradients with respect to the loss.
-    tf.Print(global_step, [global_step, tf.timestamp()], message="Start Applying Gradient ...")
     grads = opt.compute_gradients(total_loss)
     #apply_gradients_op = opt.apply_gradients(grads, global_step=global_step)
+    with tf.control_dependencies([grads]):
+      tf.Print(global_step, [global_step, tf.timestamp()], message="Done Computing Gradient ...")
+
     apply_gradients_op = opt.apply_gradients(grads, FLAGS.task_id, global_step=global_step, collect_cdfs=True)
 
     with tf.control_dependencies([apply_gradients_op]):
       train_op = tf.identity(total_loss, name='train_op')
+      #tf.Print(global_step, [global_step, tf.timestamp()], message="Start Applying Gradient ...")
 
     # Get chief queue_runners, init_tokens and clean_up_op, which is used to
     # synchronize replicas.
