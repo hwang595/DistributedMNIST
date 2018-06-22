@@ -325,7 +325,8 @@ class SyncReplicasOptimizerModified(optimizer.Optimizer):
       # Phase 1 gradient computation
       with ops.control_dependencies([update_local_step_op]):
         for index, (grad, var) in enumerate(grads_and_vars):
-          print_start_op = logging_ops.Print(global_step, [global_step], message="Starting to apply grads for variable %d" % index)
+          #print_start_op = logging_ops.Print(global_step, [global_step], message="Starting to apply grads for variable %d" % index)
+          print_start_op = logging_ops.Print(global_step, [global_step, tf.timestamp()], message="Starting to apply grads for variable {}, Time: {}".format(index, ))         
           with ops.device(var.device):
             if grad is None:
               continue
@@ -338,7 +339,7 @@ class SyncReplicasOptimizerModified(optimizer.Optimizer):
                   apply_grad_op = grad_accum.apply_grad(grad,
                                                         local_step=self._local_step._ref())
                   with ops.control_dependencies([apply_grad_op]):
-                    finished_print_op = logging_ops.Print(global_step, [global_step], message="Done applying grads for variable %d" % index)
+                    finished_print_op = logging_ops.Print(global_step, [global_step, tf.timestamp()], message="Done applying grads for variable %d" % index)
                     train_ops.append(finished_print_op)
 
             else:
@@ -352,7 +353,7 @@ class SyncReplicasOptimizerModified(optimizer.Optimizer):
                   apply_grad_op = grad_accum.apply_indexed_slices_grad(
                     grad, local_step=self._local_step._ref())
                   with ops.control_dependencies([apply_grad_op]):
-                    finished_print_op = logging_ops.Print(global_step, [global_step], message="Done applying grads for variable %d" % index)
+                    finished_print_op = logging_ops.Print(global_step, [global_step, tf.timestamp()], message="Done applying grads for variable %d" % index)
                     train_ops.append(finished_print_op)
 
 
