@@ -225,10 +225,6 @@ def train(target, cluster_spec):
     # Create an optimizer that performs gradient descent.
     opt = tf.train.GradientDescentOptimizer(lr)
 
-    # Images and labels for computing R
-    #images_R, labels_R = cifar10.inputs(eval_data=False)
-    #grads_and_vars_R = opt.compute_gradients(total_loss)
-
     distorted_inputs_queue, q_sparse_info, q_tensors = cifar10.distorted_inputs_queue()
     dequeue_inputs = []
     for i in range(1, 2048):
@@ -262,8 +258,6 @@ def train(target, cluster_spec):
     # Compute gradients with respect to the loss.
     grads = opt.compute_gradients(total_loss)
     #apply_gradients_op = opt.apply_gradients(grads, global_step=global_step)
-    with tf.control_dependencies([grads]):
-      tf.Print(global_step, [global_step, tf.timestamp()], message="Done Computing Gradient ...")
 
     apply_gradients_op = opt.apply_gradients(grads, FLAGS.task_id, global_step=global_step, collect_cdfs=True)
 
@@ -351,7 +345,6 @@ def train(target, cluster_spec):
     loss_value = -1
 
     while not sv.should_stop():
-      print("Begining of An Iteration: {}".format(begin_time))
       cur_iteration += 1
       sys.stdout.flush()
 
