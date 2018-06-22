@@ -334,7 +334,7 @@ def train(target, cluster_spec):
     # simultaneously in order to prevent running out of GPU memory.
     next_summary_time = time.time() + FLAGS.save_summaries_secs
     begin_time = time.time()
-    tf.Print(global_step, [global_step, tf.timestamp()], message="Iteration Starting point")
+    print("Begining of An Iteration: {}".format(begin_time))
 
     # Keep track of own iteration
     cur_iteration = -1
